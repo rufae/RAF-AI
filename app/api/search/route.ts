@@ -71,7 +71,12 @@ export async function GET(request: NextRequest) {
     });
 
     // Paso 2: Buscar en SerpApi o usar datos simulados
-    const searchResults = await performSearch(enhancedQuery, query);
+    const searchResults = await performSearch(enhancedQuery, query, {
+      guests,
+      priceMin,
+      priceMax,
+      location,
+    });
 
     // Paso 3: Procesar resultados con Gemini para extraer información estructurada (si está disponible)
     const processedResults = await processResultsWithGemini(searchResults, query);
@@ -151,7 +156,11 @@ Responde SOLO con la consulta optimizada (una sola línea), sin explicaciones ad
 /**
  * Realiza la búsqueda usando SerpApi, Bing o datos simulados
  */
-async function performSearch(enhancedQuery: string, originalQuery: string): Promise<any[]> {
+async function performSearch(
+  enhancedQuery: string,
+  originalQuery: string,
+  options?: { guests?: number; priceMin?: number; priceMax?: number; location?: string }
+): Promise<any[]> {
   // Intentar SerpApi primero (si está configurado)
   if (process.env.SERPAPI_KEY) {
     try {
@@ -162,13 +171,18 @@ async function performSearch(enhancedQuery: string, originalQuery: string): Prom
           engine: 'google',
           gl: 'es',
           hl: 'es',
-          num: 10,
+          num: 20, // Aumentar número de resultados para tener más variedad
         },
-        timeout: 5000,
+        timeout: 8000, // Aumentar timeout para búsquedas más complejas
       });
 
-      console.info('Using SerpApi for search');
-      return response.data.organic_results || [];
+      console.info('Using SerpApi for search with query:', enhancedQuery);
+      const results = response.data.organic_results || [];
+      if (results.length === 0) {
+        console.warn('SerpApi returned 0 results, falling back to mock');
+        return generateMockResults(originalQuery, options);
+      }
+      return results;
     } catch (error) {
       console.warn(
         'Error with SerpApi, falling back to other sources or mock:',
@@ -184,16 +198,21 @@ async function performSearch(enhancedQuery: string, originalQuery: string): Prom
         params: {
           q: enhancedQuery,
           mkt: 'es-ES',
-          count: 10,
+          count: 20,
         },
         headers: {
           'Ocp-Apim-Subscription-Key': process.env.BING_SEARCH_KEY,
         },
-        timeout: 5000,
+        timeout: 8000,
       });
 
       console.info('Using Bing Search API for search');
-      return response.data.webPages?.value || [];
+      const results = response.data.webPages?.value || [];
+      if (results.length === 0) {
+        console.warn('Bing returned 0 results, falling back to mock');
+        return generateMockResults(originalQuery, options);
+      }
+      return results;
     } catch (error) {
       console.warn(
         'Error with Bing Search, falling back to mock:',
@@ -204,14 +223,19 @@ async function performSearch(enhancedQuery: string, originalQuery: string): Prom
 
   // Ninguna API configurada o fallaron: usar datos simulados
   console.info('No external search API available — returning mock results');
-  return generateMockResults(originalQuery);
+  return generateMockResults(originalQuery, options);
 }
 
 /**
- * Genera resultados simulados para demostración
+ * Genera resultados simulados dinámicos basados en los parámetros del usuario
  */
-function generateMockResults(query: string): any[] {
-  const locations = [
+function generateMockResults(
+  query: string,
+  options?: { guests?: number; priceMin?: number; priceMax?: number; location?: string }
+): any[] {
+  // Si el usuario especificó provincia, úsala; si no, varía entre varias
+  const targetLocation = options?.location;
+  const allLocations = [
     'Granada',
     'Málaga',
     'Sevilla',
@@ -221,15 +245,50 @@ function generateMockResults(query: string): any[] {
     'Jaén',
     'Huelva',
   ];
-  const types = ['Casa Rural', 'Cortijo', 'Villa', 'Finca', 'Chalet'];
+  const locations = targetLocation ? [targetLocation] : allLocations.slice(0, 3); // 3 provincias variadas si no hay filtro
 
-  return Array.from({ length: 8 }, (_, i) => {
-    const t = types[i % types.length] ?? 'Casa Rural';
-    const loc = locations[i % locations.length] ?? 'Andalucía';
+  const types = ['Casa Rural', 'Cortijo', 'Villa', 'Finca', 'Chalet', 'Refugio de Montaña'];
+  const sierraZones = [
+    'Sierra Nevada',
+    'Sierra de Grazalema',
+    'Sierra de Cazorla',
+    'Alpujarras',
+    'Sierra Norte',
+  ];
+
+  // Generar entre 12 y 20 resultados variados (no siempre 8)
+  const numResults = Math.floor(Math.random() * 9) + 12;
+
+  // Rango de precios (usa los del usuario si están definidos, sino varía)
+  const minPrice = options?.priceMin ?? 60;
+  const maxPrice = options?.priceMax ?? 250;
+
+  return Array.from({ length: numResults }, (_, i) => {
+    const t = types[Math.floor(Math.random() * types.length)] ?? 'Casa Rural';
+    const loc = locations[Math.floor(Math.random() * locations.length)] ?? 'Andalucía';
+    const zone = sierraZones[Math.floor(Math.random() * sierraZones.length)];
+    const price = Math.floor(Math.random() * (maxPrice - minPrice + 1)) + minPrice;
+    const beds = options?.guests
+      ? Math.ceil(options.guests / 2)
+      : Math.floor(Math.random() * 4) + 2;
+
+    // Variar los dominios y rutas para simular diferentes sitios
+    const domains = [
+      'escapadarural.com',
+      'toprural.com',
+      'clubrural.com',
+      'rusticae.es',
+      'booking.com',
+      'airbnb.es',
+      'casasrurales.net',
+    ];
+    const domain = domains[Math.floor(Math.random() * domains.length)];
+    const slug = `${t.toLowerCase().replace(/\s/g, '-')}-${loc.toLowerCase()}-${i + 1}`;
+
     return {
-      title: `${t} en ${loc} - Alquiler Rural`,
-      snippet: `Hermosa ${t.toLowerCase()} en ${loc} con todas las comodidades. Piscina, wifi, jardín y vistas espectaculares. Ideal para familias y grupos.`,
-      link: `https://ejemplo${i + 1}.com/casa-rural-${loc.toLowerCase()}`,
+      title: `${t} en ${zone} (${loc}) - Ideal para ${options?.guests ?? 'grupos'}`,
+      snippet: `${t} en plena naturaleza de ${zone}, ${loc}. Perfecta para senderismo y actividades al aire libre. ${beds} habitaciones, piscina, wifi. Desde ${price}€/noche.`,
+      link: `https://www.${domain}/alojamiento/${slug}`,
       position: i + 1,
     };
   });
@@ -246,12 +305,14 @@ async function processResultsWithGemini(
     const genAI = await getGenAIClient();
     if (!genAI) {
       console.info('Gemini not configured — generating structured results locally');
-      return generateStructuredResults(searchResults.slice(0, 8));
+      // Aumentar el número de resultados que se procesan (hasta 15 en lugar de solo 8)
+      return generateStructuredResults(searchResults.slice(0, 15));
     }
     const model = genAI.getGenerativeModel({ model: process.env.GOOGLE_MODEL || 'gemini-pro' });
 
+    // Aumentar resultados procesados por Gemini
     const resultsText = searchResults
-      .slice(0, 8)
+      .slice(0, 15)
       .map(
         (r, i) =>
           `${i + 1}. ${r.title || r.name}\n${r.snippet || r.description || 'Sin descripción'}\n${r.link || r.url}`
@@ -292,11 +353,11 @@ Responde SOLO con un array JSON válido, sin explicaciones adicionales.`;
       return Array.isArray(parsed) ? parsed : [];
     } catch {
       // Si falla el parsing, generar resultados estructurados manualmente
-      return generateStructuredResults(searchResults.slice(0, 8));
+      return generateStructuredResults(searchResults.slice(0, 15));
     }
   } catch (error) {
     console.error('Error processing results with Gemini:', error);
-    return generateStructuredResults(searchResults.slice(0, 8));
+    return generateStructuredResults(searchResults.slice(0, 15));
   }
 }
 
