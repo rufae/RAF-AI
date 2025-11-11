@@ -1,6 +1,8 @@
-export default {
+// Use CommonJS export for compatibility with Next/Turbopack
+module.exports = {
   plugins: {
-    tailwindcss: {},
+    // Usa el plugin dedicado para Tailwind v4
+    '@tailwindcss/postcss': {},
     autoprefixer: {},
   },
-}
+};
